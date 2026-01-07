@@ -65,3 +65,48 @@ class ToxicityLog(models.Model):
     
     def __str__(self):
         return f"Toxicity: {self.toxicity_score:.2f} - {self.message.text[:50]}"
+
+
+class SpeechViolation(models.Model):
+    """Track speech violations during live streams"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='speech_violations')
+    stream = models.ForeignKey('chat.Stream', on_delete=models.CASCADE, related_name='speech_violations')
+    transcript = models.TextField()
+    toxicity_score = models.FloatField()
+    detected_words = models.JSONField(default=list)
+    violation_type = models.CharField(max_length=20, choices=[
+        ('warning', 'Warning'),
+        ('timeout', 'Timeout'),
+        ('stream_stop', 'Stream Stopped')
+    ])
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'stream', '-created_at']),
+            models.Index(fields=['stream', '-created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Speech violation by {self.user.username} in {self.stream.title}"
+
+
+class StreamTimeout(models.Model):
+    """Track stream timeouts for users"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stream_timeouts')
+    stream = models.ForeignKey('chat.Stream', on_delete=models.CASCADE, related_name='timeouts')
+    duration_seconds = models.IntegerField(default=60)  # Default 1 minute timeout
+    reason = models.TextField()
+    started_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['user', 'stream', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"Timeout for {self.user.username} in {self.stream.title}"

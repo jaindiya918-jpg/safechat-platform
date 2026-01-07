@@ -58,7 +58,7 @@ class KeywordDetector:
         # Toxic keywords categorized by severity
         self.toxic_keywords = {
             'high': [
-                'hate', 'kill', 'die', 'death', 'nazi', 'terrorist',
+                'hate','fuck you','go die' 'kill', 'die', 'death', 'nazi', 'terrorist',
                 'rape', 'murder', 'violence', 'abuse', 'attack'
             ],
             'medium': [

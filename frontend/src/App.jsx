@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff } from 'lucide-react';
+import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff, Mic, MicOff } from 'lucide-react';
+import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 
 const SocialModerationPlatform = () => {
   const [user, setUser] = useState(null);
@@ -20,6 +21,19 @@ const SocialModerationPlatform = () => {
   const chatContainerRef = useRef(null);
   const wsRef = useRef(null);
   const streamWsRef = useRef(null);
+
+  const {
+    isListening,
+    transcript,
+    warnings: speechWarnings,
+    isTimedOut,
+    timeoutRemaining,
+    streamStopped
+  } = useSpeechRecognition(
+    currentStream?.id,
+    user?.id,
+    isStreaming && currentStream?.streamerId === user?.id
+  );
 
   // WebSocket connection for global chat
   useEffect(() => {
@@ -68,6 +82,17 @@ const SocialModerationPlatform = () => {
           });
         } else if (data.type === 'warning') {
           setWarnings(prev => ({ ...prev, [user.id]: data.warning_count }));
+          // Remove the most recent optimistic local message from this user (it was blocked)
+          setMessages(prev => {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const m = prev[i];
+              if (String(m.id).startsWith('local-') && m.userId === user.id) {
+                const next = [...prev.slice(0, i), ...prev.slice(i + 1)];
+                return next;
+              }
+            }
+            return prev;
+          });
           alert(data.message);
         } else if (data.type === 'restriction') {
           setRestrictedUsers(prev => new Set([...prev, user.id]));
@@ -144,6 +169,16 @@ const SocialModerationPlatform = () => {
           });
         } else if (data.type === 'warning') {
           setWarnings(prev => ({ ...prev, [user.id]: data.warning_count }));
+          setMessages(prev => {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const m = prev[i];
+              if (String(m.id).startsWith('local-') && m.userId === user.id) {
+                const next = [...prev.slice(0, i), ...prev.slice(i + 1)];
+                return next;
+              }
+            }
+            return prev;
+          });
           alert(data.message);
         } else if (data.type === 'restriction') {
           setRestrictedUsers(prev => new Set([...prev, user.id]));
@@ -345,6 +380,22 @@ const SocialModerationPlatform = () => {
     }
   };
 
+  useEffect(() => {
+    if (streamStopped) {
+      alert('🚨 STREAM TERMINATED: Repeated speech violations detected. Your access has been revoked.');
+
+      // Use the shared stop handler so the stream is marked not-live in the list
+      try {
+        handleStopStream();
+      } catch (e) {
+        console.warn('Error during handleStopStream', e);
+      }
+
+      // Ensure UI redirects back to global chat
+      setActiveTab('chat');
+    }
+  }, [streamStopped]);
+
   const handleJoinStream = (stream) => {
     setCurrentStream(stream);
     setActiveTab('live');
@@ -398,6 +449,10 @@ const SocialModerationPlatform = () => {
       handler();
     }
   };
+
+  const speechWarningCount = typeof speechWarnings === 'object' && speechWarnings !== null
+    ? (speechWarnings[user?.id] || 0)
+    : (speechWarnings || 0);
 
   if (!user) {
     return (
@@ -465,6 +520,33 @@ const SocialModerationPlatform = () => {
             <span className="text-sm text-gray-600">
               Welcome, <span className="font-semibold">{user.username}</span>
             </span>
+            {/* UI Indicators for Speech Monitoring */}
+            <div className="flex items-center space-x-4">
+              {/* 1. Speech Monitoring Active: Green mic icon with pulse animation */}
+              {isListening && !isTimedOut && !streamStopped && (
+                <div className="flex items-center space-x-1 text-green-600 bg-green-50 px-3 py-1 rounded-full animate-pulse border border-green-200">
+                  <Mic className="w-4 h-4" />
+                  <span className="text-sm font-medium">Monitoring Active</span>
+                </div>
+              )}
+
+              {/* 2. Timeout: Red mic-off icon with countdown timer */}
+              {isTimedOut && (
+                <div className="flex items-center space-x-1 text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-200 shadow-sm">
+                  <MicOff className="w-4 h-4" />
+                  <span className="text-sm font-medium">MUTED: {timeoutRemaining}s</span>
+                </div>
+              )}
+
+              {/* 3. Warnings: Yellow warning badge showing "1/3", "2/3", "3/3" */}
+              {speechWarningCount > 0 && !streamStopped && (
+                <div className="flex items-center space-x-1 text-yellow-600 bg-yellow-50 px-3 py-1 rounded-full border border-yellow-200">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span className="text-sm font-medium">Speech: {speechWarningCount}/3</span>
+                </div>
+              )}
+            </div>
+
             {warnings[user.id] > 0 && (
               <div className="flex items-center space-x-1 text-yellow-600 bg-yellow-50 px-3 py-1 rounded-full">
                 <AlertTriangle className="w-4 h-4" />
