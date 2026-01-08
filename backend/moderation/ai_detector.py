@@ -72,7 +72,6 @@ class KeywordDetector:
 
         # Helper: allow non-word separators between characters to match obfuscated words
         def make_fuzzy_pattern(word: str) -> str:
-            # e.g. 'fuck' -> r'\bf\W*u\W*c\W*k\b'
             chars = [re.escape(c) for c in word]
             return r"\b" + r"\W*".join(chars) + r"\b"
 
@@ -156,7 +155,7 @@ class APIDetector:
 
     def detect(self, text: str) -> Dict:
         if not self.api_key:
-            print("OPENAI_API_KEY not set, falling back to keywords")
+            print("⚠️  OPENAI_API_KEY not set, falling back to keywords")
             return KeywordDetector().detect(text)
 
         return self._openai_moderation(text)
@@ -170,36 +169,68 @@ class APIDetector:
                 from openai import OpenAI
                 client = OpenAI(api_key=self.api_key)
 
+                print(f"\n🔍 Calling OpenAI Moderation API (attempt {attempt}/{max_attempts})")
+                print(f"   Text: '{text}'")
+
                 response = client.moderations.create(
                     model="omni-moderation-latest",
                     input=text
                 )
 
                 result = response.results[0]
-                scores = result.category_scores
+                
+                # Convert category_scores to a regular dict
+                if hasattr(result.category_scores, '__dict__'):
+                    scores = {k: v for k, v in result.category_scores.__dict__.items() if not k.startswith('_')}
+                elif hasattr(result.category_scores, 'model_dump'):
+                    scores = result.category_scores.model_dump()
+                else:
+                    scores = dict(result.category_scores)
+                
+                # Calculate max toxicity score
                 toxicity_score = max(scores.values()) if scores else 0.0
+
+                print(f"   Flagged: {result.flagged}")
+                print(f"   Max Score: {toxicity_score:.4f}")
+                print(f"   Categories: {scores}")
 
                 # If OpenAI flags the content, return that result
                 if result.flagged:
+                    print(f"   ✅ OpenAI flagged as TOXIC!")
                     return {
                         'is_toxic': True,
                         'toxicity_score': toxicity_score,
                         'categories': scores,
-                        'detected_words': [],
+                        'detected_words': [cat for cat, score in scores.items() if score > 0.5],
+                        'method': 'openai_moderation'
+                    }
+
+                # Also check if any individual category score is high (threshold: 0.7)
+                high_score_categories = [cat for cat, score in scores.items() if score > 0.7]
+                if high_score_categories:
+                    print(f"   ✅ High scores detected in: {high_score_categories}")
+                    return {
+                        'is_toxic': True,
+                        'toxicity_score': toxicity_score,
+                        'categories': scores,
+                        'detected_words': high_score_categories,
                         'method': 'openai_moderation'
                     }
 
                 # Fallback: if OpenAI did not flag, still run keyword detector as a safety net
+                print(f"   ⚠️  OpenAI didn't flag, checking keywords...")
                 keyword_result = KeywordDetector().detect(text)
                 if keyword_result.get('is_toxic'):
+                    print(f"   ✅ Keyword detector flagged as TOXIC!")
                     merged = keyword_result.copy()
                     merged.update({
                         'method': 'openai_moderation+keyword',
-                        'categories': {**(scores or {}), **keyword_result.get('categories', {})}
+                        'categories': {**scores, **keyword_result.get('categories', {})}
                     })
                     return merged
 
                 # Neither OpenAI nor keyword detected toxicity
+                print(f"   ✅ Clean speech")
                 return {
                     'is_toxic': False,
                     'toxicity_score': toxicity_score,
@@ -210,15 +241,19 @@ class APIDetector:
 
             except Exception as e:
                 msg = str(e)
-                print("OpenAI moderation error:", e)
+                print(f"❌ OpenAI moderation error (attempt {attempt}/{max_attempts}): {e}")
+                import traceback
+                traceback.print_exc()
 
                 # If rate limited, retry with exponential backoff
                 if attempt < max_attempts and ("too many requests" in msg.lower() or "429" in msg):
+                    print(f"   ⏳ Rate limited, waiting {backoff} seconds...")
                     time.sleep(backoff)
                     backoff *= 2
                     continue
 
                 # On final failure or non-retriable error, fall back to keyword detector
+                print(f"   ⚠️  Falling back to keyword detector")
                 return KeywordDetector().detect(text)
 
 
@@ -265,11 +300,15 @@ if __name__ == '__main__':
 
     tests = [
         "Hello everyone!",
-        "you are a f***ing idiot",
+        "you are a fucking idiot",
         "go kill yourself",
-        "THIS IS SO ANNOYING"
+        "THIS IS SO ANNOYING",
+        "You're stupid and worthless"
     ]
 
     for t in tests:
-        print("\nText:", t)
-        print(detector.analyze(t))
+        print("\n" + "="*60)
+        print("Testing:", t)
+        print("="*60)
+        result = detector.analyze(t)
+        print(f"Result: {result}")

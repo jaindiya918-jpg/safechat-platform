@@ -11,15 +11,25 @@ from moderation.ai_detector import ToxicityDetector
 from asgiref.sync import sync_to_async
 
 
-# Run the possibly-blocking moderation call in a threadpool
+# Run the moderation call in a threadpool
 @sync_to_async
 def run_moderation(text: str):
-    # Prefer OpenAI by default; allow overriding with MODERATION_METHOD env var
+    """Run OpenAI moderation with better error handling and logging"""
     method = os.getenv('MODERATION_METHOD', 'api')
     detector = ToxicityDetector(method=method)
     result = detector.analyze(text)
-    # Log which method was used so behavior is easier to debug
-    print(f"run_moderation using method={method} -> {result.get('method')}")
+    
+    # Log the result for debugging
+    print(f"\n{'='*60}")
+    print(f"SPEECH MODERATION RESULT:")
+    print(f"Text: {text}")
+    print(f"Method: {result.get('method', 'unknown')}")
+    print(f"Is Toxic: {result.get('is_toxic', False)}")
+    print(f"Toxicity Score: {result.get('toxicity_score', 0):.4f}")
+    print(f"Categories: {result.get('categories', {})}")
+    print(f"Detected Words: {result.get('detected_words', [])}")
+    print(f"{'='*60}\n")
+    
     return result
 
 
@@ -38,6 +48,7 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
         )
         
         await self.accept()
+        print(f"✅ Speech moderation connected: Stream {self.stream_id}, User {self.user_id}")
     
     async def disconnect(self, close_code):
         # Leave room group
@@ -45,6 +56,7 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             self.room_group_name,
             self.channel_name
         )
+        print(f"❌ Speech moderation disconnected: Stream {self.stream_id}, User {self.user_id}")
     
     async def receive(self, text_data):
         try:
@@ -52,93 +64,124 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             message_type = data.get('type')
 
             if message_type == 'speech_transcript':
-                try:
-                    transcript = data.get('transcript', '').strip()
-                    user_id = data.get('user_id')
-                    stream_id = data.get('stream_id')
+                transcript = data.get('transcript', '').strip()
+                user_id = data.get('user_id')
+                stream_id = data.get('stream_id')
 
-                    if not transcript:
-                        return
+                if not transcript:
+                    return
 
-                    # Run moderation in a threadpool-safe manner
-                    result = await run_moderation(transcript)
+                print(f"\n🎤 Received transcript from user {user_id}: '{transcript}'")
 
-                    # Debug: log moderation result to server stdout for troubleshooting
-                    print(f"MODERATION RESULT for user {user_id}: {result}")
+                # Check if user is currently timed out
+                is_timed_out = await self.check_timeout(user_id, stream_id)
+                if is_timed_out:
+                    print(f"⏸️  User {user_id} is timed out, ignoring speech")
+                    await self.send(text_data=json.dumps({
+                        'type': 'timeout_active',
+                        'message': 'You are currently timed out and cannot speak'
+                    }))
+                    return
 
-                    if result.get('is_toxic'):
-                        # Send toxic response to client (frontend can log to browser console)
-                        await self.send(text_data=json.dumps({
-                            'type': 'speech_toxic',
-                            'transcript': transcript,
-                            'details': result
-                        }))
+                # Run moderation using OpenAI API
+                print(f"🔍 Running moderation on: '{transcript}'")
+                result = await run_moderation(transcript)
 
-                        # Try to persist/log the violation, but don't let DB errors break moderation
-                        try:
-                            # Get existing violation count for this user/stream and increment
-                            current_count = await self.get_violation_count(user_id, stream_id)
-                            new_count = (current_count or 0) + 1
+                if result.get('is_toxic'):
+                    print(f"🚨 TOXIC SPEECH DETECTED!")
+                    print(f"   Score: {result.get('toxicity_score', 0):.4f}")
+                    print(f"   Categories: {result.get('categories', {})}")
 
-                            # Log the violation with the new count
-                            await self.log_violation(
-                                user_id,
-                                stream_id,
-                                transcript,
-                                result.get('toxicity_score', 0),
-                                result.get('detected_words', []),
-                                new_count
-                            )
+                    # Compute violation counts first
+                    current_count = await self.get_violation_count(user_id, stream_id)
+                    new_count = current_count + 1
+                    print(f"⚠️  User {user_id} violations: {new_count}/3")
 
-                            # Notify client and take action based on the new violation count
-                            if new_count == 1:
-                                # First automatic warning
-                                await self.send(text_data=json.dumps({
-                                    'type': 'speech_warning',
-                                    'warning_number': new_count,
-                                    'message': f'Automatic warning ({new_count}/3) for speech violation'
-                                }))
-                            elif new_count == 2:
-                                # Issue a timeout and notify client
-                                timeout_seconds = 60
-                                await self.issue_timeout(user_id, stream_id, timeout_seconds)
-                                await self.send(text_data=json.dumps({
-                                    'type': 'speech_timeout',
-                                    'warning_number': new_count,
-                                    'timeout_duration': timeout_seconds,
-                                    'message': f'You have been timed out for {timeout_seconds} seconds due to repeated violations'
-                                }))
-                            elif new_count >= 3:
-                                # Stop the stream and notify clients
-                                await self.stop_stream(stream_id)
-                                await self.send(text_data=json.dumps({
-                                    'type': 'stream_stopped',
-                                    'reason': 'Repeated speech violations',
-                                    'message': 'Stream stopped due to repeated speech violations'
-                                }))
-
-                        except Exception as db_e:
-                            # swallow DB errors to avoid breaking the WS
-                            print('Error logging violation or enforcing action:', db_e)
-
-                    else:
-                        await self.send(text_data=json.dumps({
-                            'type': 'speech_clean',
-                            'transcript': transcript
-                        }))
-
-                except Exception as inner_e:
-                    print('SPEECH MODERATION ERROR:', inner_e)
+                    # Send toxic response to client (use default=str to avoid serialization errors)
+                    toxic_payload = {
+                        'type': 'speech_toxic',
+                        'transcript': transcript,
+                        'details': result,
+                        'warning_number': new_count
+                    }
                     try:
-                        await self.send(text_data=json.dumps({
-                            'type': 'error',
-                            'message': 'Error processing speech'
-                        }))
-                    except Exception:
-                        pass
+                        await self.send(text_data=json.dumps(toxic_payload, default=str))
+                    except Exception as e:
+                        print(f"❗ Failed to send toxic payload: {e}")
+
+                    # Notify client of appropriate action (warning/timeout/stop)
+                    if new_count == 1:
+                        print(f"⚠️  Issuing WARNING 1/3 to user {user_id}")
+                        warning_payload = {
+                            'type': 'speech_warning',
+                            'warning_number': new_count,
+                            'message': f'⚠️ WARNING {new_count}/3: Your speech contains inappropriate content. Continued violations will result in timeout and stream termination.'
+                        }
+                        try:
+                            await self.send(text_data=json.dumps(warning_payload, default=str))
+                        except Exception as e:
+                            print(f"❗ Failed to send warning payload: {e}")
+
+                    elif new_count == 2:
+                        print(f"🔇 Issuing WARNING 2/3 + TIMEOUT to user {user_id}")
+                        timeout_seconds = 60
+                        try:
+                            await self.issue_timeout(user_id, stream_id, timeout_seconds)
+                        except Exception as e:
+                            print(f"❗ Failed to issue timeout: {e}")
+                        timeout_payload = {
+                            'type': 'speech_timeout',
+                            'warning_number': new_count,
+                            'timeout_duration': timeout_seconds,
+                            'message': f'🔇 WARNING {new_count}/3: You have been muted for {timeout_seconds} seconds. One more violation will terminate your stream.'
+                        }
+                        try:
+                            await self.send(text_data=json.dumps(timeout_payload, default=str))
+                        except Exception as e:
+                            print(f"❗ Failed to send timeout payload: {e}")
+
+                    elif new_count >= 3:
+                        print(f"🚫 TERMINATING STREAM for user {user_id} (3 violations)")
+                        try:
+                            await self.stop_stream(stream_id)
+                        except Exception as e:
+                            print(f"❗ Failed to stop stream: {e}")
+                        stop_payload = {
+                            'type': 'stream_stopped',
+                            'reason': 'Three speech violations detected',
+                            'message': '🚫 STREAM TERMINATED: Your stream has been stopped due to repeated speech violations.'
+                        }
+                        try:
+                            await self.send(text_data=json.dumps(stop_payload, default=str))
+                        except Exception as e:
+                            print(f"❗ Failed to send stream stop payload: {e}")
+
+                    # Best-effort: log the violation to DB, but do not allow DB errors to break the flow
+                    try:
+                        await self.log_violation(
+                            user_id,
+                            stream_id,
+                            transcript,
+                            result.get('toxicity_score', 0),
+                            result.get('detected_words', []),
+                            new_count
+                        )
+                    except Exception as e:
+                        print(f"❌ Failed to log speech violation for user {user_id}, stream {stream_id}: {e}")
+                        import traceback
+                        traceback.print_exc()
+
+                else:
+                    print(f"✅ Speech is clean")
+                    await self.send(text_data=json.dumps({
+                        'type': 'speech_clean',
+                        'transcript': transcript
+                    }))
 
         except Exception as e:
-            print(f"Error in speech moderation receive loop: {e}")
+            print(f"❌ ERROR in speech moderation: {str(e)}")
+            import traceback
+            traceback.print_exc()
             try:
                 await self.send(text_data=json.dumps({
                     'type': 'error',
@@ -147,28 +190,15 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             except Exception:
                 pass
     
-    async def user_timeout_notification(self, event):
-        """Notify about user timeout"""
-        await self.send(text_data=json.dumps({
-            'type': 'user_timed_out',
-            'user_id': event['user_id'],
-            'duration': event['duration']
-        }))
-    
-    async def stream_stopped_notification(self, event):
-        """Notify about stream being stopped"""
-        await self.send(text_data=json.dumps({
-            'type': 'stream_stopped',
-            'reason': event['reason']
-        }))
-    
     @database_sync_to_async
     def get_violation_count(self, user_id, stream_id):
         """Get the number of violations for user in this stream"""
-        return SpeechViolation.objects.filter(
+        count = SpeechViolation.objects.filter(
             user_id=user_id,
             stream_id=stream_id
         ).count()
+        print(f"📊 Current violation count for user {user_id}: {count}")
+        return count
     
     @database_sync_to_async
     def log_violation(self, user_id, stream_id, transcript, toxicity_score, detected_words, violation_count):
@@ -179,7 +209,7 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
         elif violation_count >= 3:
             violation_type = 'stream_stop'
         
-        SpeechViolation.objects.create(
+        violation = SpeechViolation.objects.create(
             user_id=user_id,
             stream_id=stream_id,
             transcript=transcript,
@@ -187,13 +217,15 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             detected_words=detected_words,
             violation_type=violation_type
         )
+        print(f"💾 Logged violation #{violation_count} (ID: {violation.id})")
+        return violation
     
     @database_sync_to_async
     def issue_timeout(self, user_id, stream_id, duration_seconds):
         """Issue a timeout for the user"""
         expires_at = timezone.now() + timedelta(seconds=duration_seconds)
         
-        StreamTimeout.objects.create(
+        timeout = StreamTimeout.objects.create(
             user_id=user_id,
             stream_id=stream_id,
             duration_seconds=duration_seconds,
@@ -201,6 +233,8 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             expires_at=expires_at,
             is_active=True
         )
+        print(f"⏰ Timeout issued: {duration_seconds}s (expires at {expires_at})")
+        return timeout
     
     @database_sync_to_async
     def check_timeout(self, user_id, stream_id):
@@ -212,6 +246,9 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             expires_at__gt=timezone.now()
         ).exists()
         
+        if active_timeout:
+            print(f"⏸️  User {user_id} is currently timed out")
+        
         return active_timeout
     
     @database_sync_to_async
@@ -222,5 +259,7 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
             stream.status = 'ended'
             stream.ended_at = timezone.now()
             stream.save()
+            print(f"🛑 Stream {stream_id} has been stopped")
         except Stream.DoesNotExist:
+            print(f"❌ Stream {stream_id} not found")
             pass
