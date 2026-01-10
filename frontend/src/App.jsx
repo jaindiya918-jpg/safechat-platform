@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff, Mic, MicOff } from 'lucide-react';
+import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff, Mic, MicOff, Heart, Clock, Trash2, Flag, } from 'lucide-react';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import Login from "./login";
+import {
+  uploadImage,
+  createPost,
+  getPosts,
+  likePost,
+  unlikePost,
+  addView,
+  reportPost,
+  deletePost
+} from "./firebase";
 
 const SocialModerationPlatform = () => {
   const [user, setUser] = useState(null);
@@ -9,18 +20,29 @@ const SocialModerationPlatform = () => {
   const [liveStreams, setLiveStreams] = useState([]);
   const [currentStream, setCurrentStream] = useState(null);
   const [messageInput, setMessageInput] = useState('');
-  const [username, setUsername] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamTitle, setStreamTitle] = useState('');
   const [warnings, setWarnings] = useState({});
   const [restrictedUsers, setRestrictedUsers] = useState(new Set());
   const [wsConnected, setWsConnected] = useState(false);
-  
+
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const chatContainerRef = useRef(null);
   const wsRef = useRef(null);
   const streamWsRef = useRef(null);
+
+  // Post Section States
+  const [posts, setPosts] = useState([]);
+  const fileInputRef = useRef(null);
+  const [newPostImage, setNewPostImage] = useState(null);
+  const [newPostCaption, setNewPostCaption] = useState("");
+
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [reportingPost, setReportingPost] = useState(null);
+  const [reportReason, setReportReason] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
 
   const {
     isListening,
@@ -41,12 +63,12 @@ const SocialModerationPlatform = () => {
 
     const connectWebSocket = () => {
       const ws = new WebSocket('ws://localhost:8000/ws/chat/');
-      
+
       ws.onopen = () => {
         console.log('WebSocket connected');
         setWsConnected(true);
       };
-      
+
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         console.log('WebSocket message:', data);
@@ -99,19 +121,19 @@ const SocialModerationPlatform = () => {
           alert(data.message);
         }
       };
-      
+
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
         setWsConnected(false);
       };
-      
+
       ws.onclose = () => {
         console.log('WebSocket disconnected');
         setWsConnected(false);
         // Reconnect after 3 seconds
         setTimeout(connectWebSocket, 3000);
       };
-      
+
       wsRef.current = ws;
     };
 
@@ -130,11 +152,11 @@ const SocialModerationPlatform = () => {
 
     const connectStreamWebSocket = () => {
       const ws = new WebSocket(`ws://localhost:8000/ws/chat/${currentStream.id}/`);
-      
+
       ws.onopen = () => {
         console.log('Stream WebSocket connected');
       };
-      
+
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
@@ -185,15 +207,15 @@ const SocialModerationPlatform = () => {
           alert(data.message);
         }
       };
-      
+
       ws.onerror = (error) => {
         console.error('Stream WebSocket error:', error);
       };
-      
+
       ws.onclose = () => {
         console.log('Stream WebSocket disconnected');
       };
-      
+
       streamWsRef.current = ws;
     };
 
@@ -211,6 +233,12 @@ const SocialModerationPlatform = () => {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Real-time listener for posts
+  useEffect(() => {
+    const unsubscribe = getPosts(setPosts);
+    return () => unsubscribe();
+  }, []);
 
   // Ensure the active video element always has the current MediaStream attached.
   useEffect(() => {
@@ -231,13 +259,7 @@ const SocialModerationPlatform = () => {
   }, [isStreaming, currentStream, activeTab]);
 
   const handleLogin = () => {
-    if (username.trim()) {
-      setUser({
-        id: Date.now(),
-        username: username.trim(),
-        joinedAt: new Date()
-      });
-    }
+    // This is now handled by the Login component in login.jsx
   };
 
   const handleSendMessage = () => {
@@ -303,7 +325,7 @@ const SocialModerationPlatform = () => {
       }
 
       streamRef.current = stream;
-      
+
       const newStream = {
         id: Date.now(),
         streamerId: user.id,
@@ -365,7 +387,7 @@ const SocialModerationPlatform = () => {
     }
 
     if (currentStream) {
-      setLiveStreams(prev => 
+      setLiveStreams(prev =>
         prev.map(s => s.id === currentStream.id ? { ...s, isLive: false } : s)
       );
     }
@@ -376,7 +398,7 @@ const SocialModerationPlatform = () => {
     if (videoRef.current) {
       try {
         videoRef.current.srcObject = null;
-      } catch (e) {}
+      } catch (e) { }
     }
   };
 
@@ -417,10 +439,10 @@ const SocialModerationPlatform = () => {
     setMessages(prev =>
       prev.map(msg => msg.id === messageId ? { ...msg, flagged: true } : msg)
     );
-    
+
     const userWarnings = warnings[userId] || 0;
     setWarnings(prev => ({ ...prev, [userId]: userWarnings + 1 }));
-    
+
     if (userWarnings + 1 >= 3) {
       setRestrictedUsers(prev => new Set([...prev, userId]));
     }
@@ -454,42 +476,118 @@ const SocialModerationPlatform = () => {
     ? (speechWarnings[user?.id] || 0)
     : (speechWarnings || 0);
 
+  const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setNewPostImage(file);
+      setPreviewUrl(URL.createObjectURL(file));
+    }
+  };
+
+  const handleCreatePost = async () => {
+    console.log("📝 Create Post Request:", {
+      caption: newPostCaption,
+      hasImage: !!newPostImage
+    });
+
+    if (!newPostCaption && !newPostImage) return;
+
+    try {
+      let imageUrl = null;
+      if (newPostImage) {
+        console.log("📸 Starting photo upload...");
+        imageUrl = await uploadImage(newPostImage);
+        console.log("✨ Photo upload complete. URL:", imageUrl);
+      }
+
+      console.log("📡 Calling firebase.createPost...");
+      await createPost(user.id, user.username, newPostCaption, imageUrl);
+
+      console.log("✅ Post created successfully!");
+      setNewPostImage(null);
+      setNewPostCaption("");
+      setPreviewUrl(null);
+      alert("Post created successfully!");
+    } catch (error) {
+      console.error("💥 Error in handleCreatePost:", error);
+      alert("Error creating post: " + (error.message || "Unknown error"));
+    }
+  };
+
+  const handleLikePost = async (post) => {
+    if (!user) return;
+    try {
+      if (post.is_liked) {
+        await unlikePost(post.id, user.id);
+      } else {
+        await likePost(post.id, user.id);
+      }
+    } catch (error) {
+      console.error("Error liking post:", error);
+    }
+  };
+
+  const handleViewPost = async (postId, imageUrl) => {
+    setSelectedImage(imageUrl);
+    try {
+      await addView(postId);
+    } catch (e) {
+      console.error("Error incrementing view", e);
+    }
+  };
+
+  const handleDeletePost = async (postId, postUserId) => {
+    console.log("🗑️ Delete Request:", {
+      postId,
+      postIdType: typeof postId,
+      postUserId,
+      postUserIdType: typeof postUserId,
+      currentUserId: user?.id,
+      currentUserIdType: typeof user?.id,
+      match: String(user?.id) === String(postUserId)
+    });
+
+    if (!user || (String(user.id) !== String(postUserId))) {
+      console.error("❌ Ownership Mismatch!", {
+        current: user?.id,
+        owner: postUserId
+      });
+      alert("You can only delete your own posts.");
+      return;
+    }
+
+    if (!window.confirm("Are you sure you want to delete this post?")) {
+      console.log("🚫 Deletion cancelled by user");
+      return;
+    }
+
+    try {
+      console.log("📡 Calling firebase.deletePost for ID:", postId);
+      await deletePost(postId);
+      console.log("✅ Deletion confirmed by Firebase");
+      alert("Post deleted successfully!");
+    } catch (error) {
+      console.error("💥 Deletion error in component:", error);
+      alert("Error deleting post: " + (error.message || "Unknown error"));
+    }
+  };
+
+  const handleReportPost = async () => {
+    if (!reportingPost || !reportReason) return;
+    try {
+      await reportPost(reportingPost.id, user.id, reportReason);
+      alert("Post reported successfully. Thank you for making the community safe.");
+      setReportingPost(null);
+      setReportReason("");
+      setReportDescription("");
+    } catch (error) {
+      console.error("Error reporting post:", error);
+      alert("Error reporting post");
+    }
+  };
+
   if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="inline-block p-3 bg-purple-100 rounded-full mb-4">
-              <Users className="w-12 h-12 text-purple-600" />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">SafeChat</h1>
-            <p className="text-gray-600">AI-Powered Real-Time Social Platform</p>
-          </div>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Choose a username
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyPress={(e) => handleKeyPress(e, handleLogin)}
-                placeholder="Enter username"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              />
-            </div>
-            <button
-              onClick={handleLogin}
-              className="w-full bg-purple-600 text-white py-3 rounded-lg font-semibold hover:bg-purple-700 transition"
-            >
-              Join Platform
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    return <Login onLogin={setUser} />;
   }
 
   return (
@@ -515,7 +613,7 @@ const SocialModerationPlatform = () => {
               )}
             </div>
           </div>
-          
+
           <div className="flex items-center space-x-4">
             <span className="text-sm text-gray-600">
               Welcome, <span className="font-semibold">{user.username}</span>
@@ -564,30 +662,35 @@ const SocialModerationPlatform = () => {
             <div className="space-y-2">
               <button
                 onClick={() => setActiveTab('chat')}
-                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${
-                  activeTab === 'chat' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
-                }`}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${activeTab === 'chat' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
+                  }`}
               >
                 <MessageSquare className="w-4 h-4" />
                 <span>Global Chat</span>
               </button>
               <button
                 onClick={() => setActiveTab('streams')}
-                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${
-                  activeTab === 'streams' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
-                }`}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${activeTab === 'streams' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
+                  }`}
               >
                 <Video className="w-4 h-4" />
                 <span>Live Streams</span>
               </button>
               <button
                 onClick={() => setActiveTab('golive')}
-                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${
-                  activeTab === 'golive' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
-                }`}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${activeTab === 'golive' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
+                  }`}
               >
                 <Radio className="w-4 h-4" />
                 <span>Go Live</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('posts')}
+                className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg transition ${activeTab === 'posts' ? 'bg-purple-100 text-purple-700' : 'hover:bg-gray-100'
+                  }`}
+              >
+                <Heart className="w-4 h-4" />
+                <span>Posts</span>
               </button>
             </div>
           </div>
@@ -696,7 +799,7 @@ const SocialModerationPlatform = () => {
           {activeTab === 'golive' && (
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-6">Start Live Stream</h2>
-              
+
               {!isStreaming ? (
                 <div className="space-y-4">
                   <div>
@@ -711,7 +814,7 @@ const SocialModerationPlatform = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     />
                   </div>
-                  
+
                   <button
                     onClick={handleStartStream}
                     className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition flex items-center justify-center space-x-2"
@@ -731,7 +834,7 @@ const SocialModerationPlatform = () => {
                       className="w-full h-full object-cover"
                     />
                   </div>
-                  
+
                   <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg">
                     <div className="flex items-center space-x-2">
                       <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
@@ -857,7 +960,7 @@ const SocialModerationPlatform = () => {
           {activeTab === 'streams' && (
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-6">Live Streams</h2>
-              
+
               {liveStreams.filter(s => s.isLive).length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                   <Video className="w-16 h-16 mx-auto mb-4 opacity-50" />
@@ -893,10 +996,222 @@ const SocialModerationPlatform = () => {
               )}
             </div>
           )}
+          {activeTab === "posts" && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">Sharing Moments</h2>
+
+              {/* Create Post */}
+              <div className="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h3 className="text-md font-semibold mb-3">Share a photo</h3>
+                <div className="space-y-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageSelect}
+                    ref={fileInputRef}
+                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 transition"
+                  />
+                  {previewUrl && (
+                    <div className="mt-2 text-center">
+                      <img src={previewUrl} alt="Preview" className="max-h-60 mx-auto rounded-lg shadow-sm" />
+                    </div>
+                  )}
+                  <textarea
+                    value={newPostCaption}
+                    onChange={(e) => setNewPostCaption(e.target.value)}
+                    placeholder="Add a caption..."
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleCreatePost}
+                    disabled={!newPostImage && !newPostCaption}
+                    className="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 transition disabled:bg-gray-300"
+                  >
+                    Post
+                  </button>
+                </div>
+              </div>
+
+              {/* Posts Feed */}
+              <div className="space-y-6">
+                {posts.map(post => (
+                  <div key={post.id} className="border rounded-lg overflow-hidden bg-white hover:shadow-lg transition">
+                    <div className="p-3 flex items-center space-x-2 border-b">
+                      <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center font-bold text-purple-700">
+                        {post.username[0].toUpperCase()}
+                      </div>
+                      <span className="font-semibold text-gray-800">{post.username}</span>
+                    </div>
+
+                    {post.is_rumour && (
+                      <div className="bg-red-50 border-l-4 border-red-500 p-3 mx-4 mt-3">
+                        <div className="flex items-center">
+                          <AlertTriangle className="h-5 w-5 text-red-500 mr-2" />
+                          <p className="text-sm text-red-700 font-medium">
+                            Fact Check: Potential False Information
+                          </p>
+                        </div>
+                        {post.rumor_reason && (
+                          <p className="text-xs text-red-600 mt-1 ml-7">
+                            {post.rumor_reason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {post.image && (
+                      <div className="relative group cursor-pointer" onClick={() => handleViewPost(post.id, post.image)}>
+                        <img src={post.image} alt="Post content" className="w-full object-cover max-h-96" />
+                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all flex items-center justify-center">
+                          <Eye className="text-white opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8" />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="p-4 space-y-2">
+                      <div className="flex items-center space-x-4">
+                        <button
+                          onClick={() => handleLikePost(post)}
+                          className={`flex items-center space-x-1 transition ${post.is_liked ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}
+                        >
+                          <Heart className={`w-6 h-6 ${post.is_liked ? 'fill-current' : ''}`} />
+                          <span>{post.likes_count}</span>
+                        </button>
+                        <div className="flex items-center space-x-1 text-gray-500">
+                          <Eye className="w-6 h-6" />
+                          <span>{post.views}</span>
+                        </div>
+                        <button
+                          onClick={() => setReportingPost(post)}
+                          className="flex items-center space-x-1 text-yellow-600 hover:text-yellow-700 transition ml-auto"
+                          title="Report Post"
+                        >
+                          <Flag className="w-5 h-5" />
+                          <span className="text-sm font-medium">Report</span>
+                        </button>
+                        {(String(user.id) === String(post.user_id) || String(user.id) === String(post.userId)) && (
+                          <button
+                            onClick={() => handleDeletePost(post.id, post.user_id || post.userId)}
+                            className="bg-red-50 text-red-600 p-1.5 rounded-lg hover:bg-red-100 transition ml-2"
+                            title="Delete Post"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-gray-700">
+                        <span className="font-semibold mr-2">{post.username}</span>
+                        {post.caption}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {post.createdAt ? (post.createdAt.toDate ? post.createdAt.toDate() : new Date(post.createdAt)).toLocaleDateString() : 'Just now'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
+      {/* Image Modal */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black bg-opacity-90 flex items-center justify-center p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full h-full flex items-center justify-center">
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute -top-10 right-0 text-white hover:text-gray-300 transition"
+            >
+              <div className="bg-gray-800 rounded-full p-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+            </button>
+            <img
+              src={selectedImage}
+              alt="Full view"
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {reportingPost && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-800">Report Post</h3>
+                <button
+                  onClick={() => setReportingPost(null)}
+                  className="text-gray-400 hover:text-gray-600 transition"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Reason
+                  </label>
+                  <select
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 bg-white"
+                  >
+                    <option value="">Select a reason</option>
+                    <option value="spam">Spam</option>
+                    <option value="hate_speech">Hate Speech</option>
+                    <option value="harassment">Harassment</option>
+                    <option value="misinformation">Misinformation</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description (optional)
+                  </label>
+                  <textarea
+                    value={reportDescription}
+                    onChange={(e) => setReportDescription(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent h-24 text-gray-800 bg-white"
+                    placeholder="Provide more details..."
+                  />
+                </div>
+
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => setReportingPost(null)}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleReportPost}
+                    disabled={!reportReason}
+                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:bg-gray-400"
+                  >
+                    Submit Report
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
 
 export default SocialModerationPlatform;

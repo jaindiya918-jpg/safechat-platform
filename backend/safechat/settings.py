@@ -11,6 +11,11 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +132,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -144,6 +150,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
 }
+
+# Google Fact Check API
+GOOGLE_FACT_CHECK_API_KEY = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "YOUR_GOOGLE_FACT_CHECK_API_KEY_HERE")
 
 # Channels
 ASGI_APPLICATION = 'safechat.asgi.application'

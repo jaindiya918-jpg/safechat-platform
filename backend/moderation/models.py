@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.conf import settings
 
 User = get_user_model()
 
@@ -124,3 +125,45 @@ class StreamTimeout(models.Model):
         user_display = self.user.username if self.user else (self.user_identifier or 'unknown')
         stream_display = self.stream.title if self.stream else (self.stream_identifier or 'unknown')
         return f"Timeout for {user_display} in {stream_display}"
+
+class Post(models.Model):
+    user_id = models.CharField(max_length=255, default="")
+    username = models.CharField(max_length=255, default="")
+    image = models.ImageField(upload_to='posts/', null=True, blank=True)
+    caption = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    views = models.IntegerField(default=0)
+    is_rumor = models.BooleanField(default=False)
+    rumor_reason = models.TextField(blank=True, default="")
+
+    def __str__(self):
+        return f"{self.username} - {self.created_at}"
+
+    @property
+    def likes_count(self):
+        return self.post_likes.count()
+
+class PostLike(models.Model):
+    post = models.ForeignKey(Post, related_name='post_likes', on_delete=models.CASCADE)
+    user_id = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('post', 'user_id')
+
+class PostReport(models.Model):
+    post = models.ForeignKey(Post, related_name='reports', on_delete=models.CASCADE)
+    reporter_user_id = models.CharField(max_length=255)
+    reason = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Report for {self.post.id} by {self.reporter_user_id}"
+
+class ConfirmedRumor(models.Model):
+    caption_text = models.TextField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Confirmed Rumor: {self.caption_text[:50]}..."

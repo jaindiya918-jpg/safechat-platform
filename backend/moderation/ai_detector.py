@@ -1,7 +1,8 @@
 import re
 import os
 import time
-from typing import Dict, List
+import requests
+from typing import Dict, List, Tuple
 
 # -------------------------------
 # Main Detector
@@ -289,6 +290,53 @@ def comprehensive_check(text: str) -> Dict:
         'has_repeated_chars': detect_repeated_characters(text),
         'is_shouting': detect_all_caps(text),
     }
+
+
+def is_factually_correct(text: str) -> Tuple[bool, str]:
+    """
+    Checks if the text is factually correct using Google Fact Check API.
+    Returns (is_correct, reason)
+    """
+    api_key = os.getenv("GOOGLE_FACT_CHECK_API_KEY")
+    if not api_key:
+        print("⚠️ GOOGLE_FACT_CHECK_API_KEY not set, skipping fact check")
+        return True, ""
+
+    try:
+        url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+        params = {
+            "query": text,
+            "key": api_key
+        }
+        
+        print(f"🔍 Checking facts for: '{text[:50]}...'")
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        claims = data.get('claims', [])
+        if not claims:
+            return True, ""
+
+        # Check the first claim's rating
+        for claim in claims:
+            claim_review = claim.get('claimReview', [])
+            if claim_review:
+                rating = claim_review[0].get('textualRating', '').lower()
+                publisher = claim_review[0].get('publisher', {}).get('name', 'Unknown')
+                
+                # Broad keywords for false/misleading information
+                false_keywords = ['false', 'incorrect', 'misleading', 'fake', 'rumor', 'untrue', 'error']
+                if any(k in rating for k in false_keywords):
+                    reason = f"Fact Check: This claim was rated '{rating}' by {publisher}."
+                    print(f"🚨 Fact check failed: {reason}")
+                    return False, reason
+
+        return True, ""
+
+    except Exception as e:
+        print(f"❌ Fact Check API Error: {e}")
+        return True, "" # Default to true on API failure to avoid blocking users
 
 
 # -------------------------------
