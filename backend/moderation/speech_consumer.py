@@ -12,10 +12,9 @@ from moderation.ai_detector import ToxicityDetector, KeywordDetector, APIDetecto
 from asgiref.sync import sync_to_async
 
 
-# Run the moderation call in a threadpool
-@sync_to_async
-def run_moderation(text: str):
-    """Run OpenAI moderation with better error handling and logging"""
+# Run the moderation call asynchronously
+async def run_moderation_async(text: str):
+    """Run OpenAI moderation asynchronously with better error handling and logging"""
     method = os.getenv('MODERATION_METHOD', 'api')
 
     # Fast-path: when using API mode, run a quick keyword detector first
@@ -35,28 +34,18 @@ def run_moderation(text: str):
         # If keyword check is clean/uncertain, fall back to API detector
         try:
             api = APIDetector()
-            result = api.detect(text)
+            return await api.detect_async(text)
         except Exception as e:
             print(f"❌ API detector failed: {e}")
             # Fallback to full ToxicityDetector keyword method
             detector = ToxicityDetector(method='keyword')
-            result = detector.analyze(text)
+            return detector.analyze(text)
     else:
+        # For non-API methods, we might still be blocking if they are CPU intensive (like transformer)
+        # But for now assuming they are fast enough or handled. 
+        # Ideally, offload CPU work to threadpool if needed.
         detector = ToxicityDetector(method=method)
-        result = detector.analyze(text)
-    
-    # Log the result for debugging
-    print(f"\n{'='*60}")
-    print(f"SPEECH MODERATION RESULT:")
-    print(f"Text: {text}")
-    print(f"Method: {result.get('method', 'unknown')}")
-    print(f"Is Toxic: {result.get('is_toxic', False)}")
-    print(f"Toxicity Score: {result.get('toxicity_score', 0):.4f}")
-    print(f"Categories: {result.get('categories', {})}")
-    print(f"Detected Words: {result.get('detected_words', [])}")
-    print(f"{'='*60}\n")
-    
-    return result
+        return await detector.analyze_async(text)
 
 
 class SpeechModerationConsumer(AsyncWebsocketConsumer):
@@ -109,9 +98,9 @@ class SpeechModerationConsumer(AsyncWebsocketConsumer):
                     }))
                     return
 
-                # Run moderation using OpenAI API
+                # Run moderation using OpenAI API (Async)
                 print(f"🔍 Running moderation on: '{transcript}'")
-                result = await run_moderation(transcript)
+                result = await run_moderation_async(transcript)
 
                 if result.get('is_toxic'):
                     print(f"🚨 TOXIC SPEECH DETECTED!")

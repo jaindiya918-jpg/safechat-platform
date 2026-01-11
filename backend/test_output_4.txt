@@ -1,0 +1,73 @@
+﻿Checking API Key: Present
+
+Testing clean text: 'You are amazing and I love this stream!'
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 1/3)
+   [X] OpenAI Async moderation error (attempt 1/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 1 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 2/3)
+   [X] OpenAI Async moderation error (attempt 2/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 2 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 3/3)
+   [X] OpenAI Async moderation error (attempt 3/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Falling back to keyword detector
+Result: {'is_toxic': False, 'toxicity_score': 0.0, 'categories': {'high': 0, 'medium': 0, 'low': 0}, 'detected_words': [], 'method': 'keyword'}
+Time: 12.3606s
+
+Testing toxic text: 'You are a stupid idiot'
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 1/3)
+   [X] OpenAI Async moderation error (attempt 1/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 1 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 2/3)
+   [X] OpenAI Async moderation error (attempt 2/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 2 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 3/3)
+   [X] OpenAI Async moderation error (attempt 3/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Falling back to keyword detector
+Result: {'is_toxic': True, 'toxicity_score': 0.39999999999999997, 'categories': {'high': 0, 'medium': 2, 'low': 0}, 'detected_words': ['stupid', 'idiot'], 'method': 'keyword'}
+Time: 11.5137s
+
+Testing concurrency (3 requests)...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 1/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 1/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 1/3)
+   [X] OpenAI Async moderation error (attempt 1/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 1 seconds...
+   [X] OpenAI Async moderation error (attempt 1/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 1 seconds...
+   [X] OpenAI Async moderation error (attempt 1/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 1 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 2/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 2/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 2/3)
+   [X] OpenAI Async moderation error (attempt 2/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 2 seconds...
+   [X] OpenAI Async moderation error (attempt 2/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 2 seconds...
+   [X] OpenAI Async moderation error (attempt 2/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Rate limited, waiting 2 seconds...
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 3/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 3/3)
+
+[?] Calling OpenAI Moderation API (ASYNC) (attempt 3/3)
+   [X] OpenAI Async moderation error (attempt 3/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Falling back to keyword detector
+   [X] OpenAI Async moderation error (attempt 3/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Falling back to keyword detector
+   [X] OpenAI Async moderation error (attempt 3/3): Error code: 429 - {'error': {'message': 'Too Many Requests', 'type': 'invalid_request_error', 'param': None, 'code': None}}
+   [!] Falling back to keyword detector
+Total time for 3 requests: 18.2105s
+Average time per request: 6.0702s
