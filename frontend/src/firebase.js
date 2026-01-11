@@ -90,7 +90,8 @@ export async function createPost(userId, username, caption, imageUrl) {
         // 2. Create the post in Firestore
         console.log("💾 firebase.createPost: Saving to Firestore...");
         const docRef = await addDoc(collection(db, "posts"), {
-            user_id: userId,
+            user_id: userId,   // Keep snake_case for backend compatibility
+            userId: userId,    // Add camelCase for potential security rule compatibility
             username: username,
             caption: caption,
             image: imageUrl,
@@ -207,13 +208,39 @@ export async function deletePost(postId) {
     }
 
     console.log("🔥 firebase.deletePost: Attempting to delete doc:", postId);
+    
+    // Safety check: ensure the user is authenticated in Firebase
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        console.error("❌ firebase.deletePost: No authenticated user found in Firebase Auth");
+        throw new Error("You must be logged in to delete a post.");
+    }
+    console.log("👤 Deleting as user:", currentUser.uid);
+
     try {
         const postRef = doc(db, "posts", postId);
-        console.log("Ref path:", postRef.path);
+        
+        // Verify existence and ownership if possible before deletion to provide better error messages
+        const postSnap = await getDoc(postRef);
+        if (!postSnap.exists()) {
+            throw new Error("Post does not exist.");
+        }
+        
+        const postData = postSnap.data();
+        const ownerId = postData.user_id || postData.userId;
+        
+        if (ownerId && ownerId !== currentUser.uid) {
+            console.error("❌ Ownership mismatch in Firestore:", { ownerId, currentUid: currentUser.uid });
+            throw new Error("Permission denied: You do not own this post.");
+        }
+
         await deleteDoc(postRef);
         console.log("🔥 firebase.deletePost: Document successfully deleted");
     } catch (error) {
-        console.error("❌ firebase.deletePost: Error:", error);
+        console.error("❌ firebase.deletePost: Error details:", error);
+        if (error.code === 'permission-denied') {
+            throw new Error("Permission denied: You don't have permission to delete this post. It might be flagged or restricted.");
+        }
         throw error;
     }
 }

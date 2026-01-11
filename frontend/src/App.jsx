@@ -1089,7 +1089,7 @@ const SocialModerationPlatform = () => {
                           <Flag className="w-5 h-5" />
                           <span className="text-sm font-medium">Report</span>
                         </button>
-                        {(String(user.id) === String(post.user_id) || String(user.id) === String(post.userId)) && (
+                        {(String(user.id) === String(post.user_id || post.userId)) && (
                           <button
                             onClick={() => handleDeletePost(post.id, post.user_id || post.userId)}
                             className="bg-red-50 text-red-600 p-1.5 rounded-lg hover:bg-red-100 transition ml-2"
