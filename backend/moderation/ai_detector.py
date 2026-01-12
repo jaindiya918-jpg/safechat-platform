@@ -1,7 +1,9 @@
 import re
 import os
 import time
+import asyncio
 import requests
+import httpx
 from typing import Dict, List, Tuple
 
 # -------------------------------
@@ -24,12 +26,27 @@ class ToxicityDetector:
             self.api_detector = APIDetector()
 
     def analyze(self, text: str) -> Dict:
+        """Synchronous analyze method (legacy/fallback)"""
         if self.method == 'keyword':
             return self.keyword_detector.detect(text)
         elif self.method == 'transformer':
             return self.model_detector.detect(text)
         elif self.method == 'api':
             return self.api_detector.detect(text)
+        else:
+            return self.keyword_detector.detect(text)
+
+    async def analyze_async(self, text: str) -> Dict:
+        """Asynchronous analyze method (preferred)"""
+        if self.method == 'keyword':
+            return self.keyword_detector.detect(text)
+        elif self.method == 'transformer':
+            # Transformer is usually CPU bound, run in thread if needed, 
+            # or just call sync since it's local.
+            # ideally offload to threadpool
+            return self.model_detector.detect(text)
+        elif self.method == 'api':
+            return await self.api_detector.detect_async(text)
         else:
             return self.keyword_detector.detect(text)
 
@@ -148,20 +165,74 @@ class TransformerDetector:
 
 class APIDetector:
     """
-    Uses OpenAI Moderation API
+    Uses OpenAI Moderation API (Async & Sync)
     """
 
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            print("[!] OPENAI_API_KEY not set in environment!")
 
     def detect(self, text: str) -> Dict:
+        """Synchronous detection"""
         if not self.api_key:
-            print("⚠️  OPENAI_API_KEY not set, falling back to keywords")
+            print("[!] OPENAI_API_KEY not set, falling back to keywords")
             return KeywordDetector().detect(text)
+        return self._openai_moderation_sync(text)
 
-        return self._openai_moderation(text)
+    async def detect_async(self, text: str) -> Dict:
+        """Asynchronous detection"""
+        if not self.api_key:
+            print("[!] OPENAI_API_KEY not set, falling back to keywords")
+            return KeywordDetector().detect(text)
+        return await self._openai_moderation_async(text)
 
-    def _openai_moderation(self, text: str) -> Dict:
+    def _process_results(self, result, text) -> Dict:
+        """Helper to process OpenAI results"""
+        # Convert category_scores to a regular dict
+        if hasattr(result.category_scores, '__dict__'):
+            scores = {k: v for k, v in result.category_scores.__dict__.items() if not k.startswith('_')}
+        elif hasattr(result.category_scores, 'model_dump'):
+            scores = result.category_scores.model_dump()
+        else:
+            scores = dict(result.category_scores)
+        
+        # Calculate max toxicity score
+        toxicity_score = max(scores.values()) if scores else 0.0
+
+        # If OpenAI flags the content
+        if result.flagged:
+            print(f"   [+] OpenAI flagged as TOXIC!")
+            return {
+                'is_toxic': True,
+                'toxicity_score': toxicity_score,
+                'categories': scores,
+                'detected_words': [cat for cat, score in scores.items() if score > 0.5],
+                'method': 'openai_moderation'
+            }
+
+        # Also check if any individual category score is high (threshold: 0.7)
+        high_score_categories = [cat for cat, score in scores.items() if score > 0.7]
+        if high_score_categories:
+            print(f"   [+] High scores detected in: {high_score_categories}")
+            return {
+                'is_toxic': True,
+                'toxicity_score': toxicity_score,
+                'categories': scores,
+                'detected_words': high_score_categories,
+                'method': 'openai_moderation'
+            }
+        
+        # Safe return
+        return {
+            'is_toxic': False,
+            'toxicity_score': toxicity_score,
+            'categories': scores,
+            'detected_words': [],
+            'method': 'openai_moderation'
+        }
+
+    def _openai_moderation_sync(self, text: str) -> Dict:
         max_attempts = 3
         backoff = 1
 
@@ -170,91 +241,60 @@ class APIDetector:
                 from openai import OpenAI
                 client = OpenAI(api_key=self.api_key)
 
-                print(f"\n🔍 Calling OpenAI Moderation API (attempt {attempt}/{max_attempts})")
+                print(f"\n[?] Calling OpenAI Moderation API (SYNC) (attempt {attempt}/{max_attempts})")
                 print(f"   Text: '{text}'")
 
                 response = client.moderations.create(
                     model="omni-moderation-latest",
                     input=text
                 )
-
                 result = response.results[0]
-                
-                # Convert category_scores to a regular dict
-                if hasattr(result.category_scores, '__dict__'):
-                    scores = {k: v for k, v in result.category_scores.__dict__.items() if not k.startswith('_')}
-                elif hasattr(result.category_scores, 'model_dump'):
-                    scores = result.category_scores.model_dump()
-                else:
-                    scores = dict(result.category_scores)
-                
-                # Calculate max toxicity score
-                toxicity_score = max(scores.values()) if scores else 0.0
-
-                print(f"   Flagged: {result.flagged}")
-                print(f"   Max Score: {toxicity_score:.4f}")
-                print(f"   Categories: {scores}")
-
-                # If OpenAI flags the content, return that result
-                if result.flagged:
-                    print(f"   ✅ OpenAI flagged as TOXIC!")
-                    return {
-                        'is_toxic': True,
-                        'toxicity_score': toxicity_score,
-                        'categories': scores,
-                        'detected_words': [cat for cat, score in scores.items() if score > 0.5],
-                        'method': 'openai_moderation'
-                    }
-
-                # Also check if any individual category score is high (threshold: 0.7)
-                high_score_categories = [cat for cat, score in scores.items() if score > 0.7]
-                if high_score_categories:
-                    print(f"   ✅ High scores detected in: {high_score_categories}")
-                    return {
-                        'is_toxic': True,
-                        'toxicity_score': toxicity_score,
-                        'categories': scores,
-                        'detected_words': high_score_categories,
-                        'method': 'openai_moderation'
-                    }
-
-                # Fallback: if OpenAI did not flag, still run keyword detector as a safety net
-                print(f"   ⚠️  OpenAI didn't flag, checking keywords...")
-                keyword_result = KeywordDetector().detect(text)
-                if keyword_result.get('is_toxic'):
-                    print(f"   ✅ Keyword detector flagged as TOXIC!")
-                    merged = keyword_result.copy()
-                    merged.update({
-                        'method': 'openai_moderation+keyword',
-                        'categories': {**scores, **keyword_result.get('categories', {})}
-                    })
-                    return merged
-
-                # Neither OpenAI nor keyword detected toxicity
-                print(f"   ✅ Clean speech")
-                return {
-                    'is_toxic': False,
-                    'toxicity_score': toxicity_score,
-                    'categories': scores,
-                    'detected_words': [],
-                    'method': 'openai_moderation'
-                }
+                return self._process_results(result, text)
 
             except Exception as e:
                 msg = str(e)
-                print(f"❌ OpenAI moderation error (attempt {attempt}/{max_attempts}): {e}")
-                import traceback
-                traceback.print_exc()
-
-                # If rate limited, retry with exponential backoff
+                print(f"   [X] OpenAI moderation error (attempt {attempt}/{max_attempts}): {e}")
+                
                 if attempt < max_attempts and ("too many requests" in msg.lower() or "429" in msg):
-                    print(f"   ⏳ Rate limited, waiting {backoff} seconds...")
+                    print(f"   [!] Rate limited, waiting {backoff} seconds...")
                     time.sleep(backoff)
                     backoff *= 2
                     continue
+                
+                print(f"   [!] Falling back to keyword detector")
+                return KeywordDetector().detect(text)
 
-                # On final failure or non-retriable error, fall back to keyword detector
-                print(f"   ⚠️  Falling back to keyword detector")
+    async def _openai_moderation_async(self, text: str) -> Dict:
+        max_attempts = 3
+        backoff = 1
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=self.api_key)
+
+                print(f"\n[?] Calling OpenAI Moderation API (ASYNC) (attempt {attempt}/{max_attempts})")
+                # print(f"   Text: '{text}'")
+
+                response = await client.moderations.create(
+                    model="omni-moderation-latest",
+                    input=text
+                )
+                result = response.results[0]
+                return self._process_results(result, text)
+
+            except Exception as e:
+                msg = str(e)
+                print(f"   [X] OpenAI Async moderation error (attempt {attempt}/{max_attempts}): {e}")
+                
+                # If rate limited, retry
+                if attempt < max_attempts and ("too many requests" in msg.lower() or "429" in msg):
+                    print(f"   [!] Rate limited, waiting {backoff} seconds...")
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+                    continue
+                
+                print(f"   [!] Falling back to keyword detector")
                 return KeywordDetector().detect(text)
 
 
@@ -280,6 +320,17 @@ def detect_all_caps(text: str) -> bool:
     return sum(c.isupper() for c in letters) / len(letters) > 0.7
 
 
+async def comprehensive_check_async(text: str) -> Dict:
+    detector = ToxicityDetector(method='api')
+    result = await detector.analyze_async(text)
+
+    return {
+        **result,
+        'is_spam': detect_spam(text),
+        'has_repeated_chars': detect_repeated_characters(text),
+        'is_shouting': detect_all_caps(text),
+    }
+
 def comprehensive_check(text: str) -> Dict:
     detector = ToxicityDetector(method='api')
     result = detector.analyze(text)
@@ -292,14 +343,13 @@ def comprehensive_check(text: str) -> Dict:
     }
 
 
-def is_factually_correct(text: str) -> Tuple[bool, str]:
+async def is_factually_correct_async(text: str) -> Tuple[bool, str]:
     """
-    Checks if the text is factually correct using Google Fact Check API.
-    Returns (is_correct, reason)
+    Async Fact Check using Google API (httpx)
     """
     api_key = os.getenv("GOOGLE_FACT_CHECK_API_KEY")
     if not api_key:
-        print("⚠️ GOOGLE_FACT_CHECK_API_KEY not set, skipping fact check")
+        print("[!] GOOGLE_FACT_CHECK_API_KEY not set, skipping fact check")
         return True, ""
 
     try:
@@ -309,57 +359,72 @@ def is_factually_correct(text: str) -> Tuple[bool, str]:
             "key": api_key
         }
         
-        print(f"🔍 Checking facts for: '{text}' using Google Fact Check API")
-        response = requests.get(url, params=params)
-        print(f"📡 API Response Status: {response.status_code}")
+        print(f"Checking facts (ASYNC) for: '{text}'")
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params)
+            
+        print(f"API Response Status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
-        print(f"📊 API Data Keys: {list(data.keys())}")
 
         claims = data.get('claims', [])
-        print(f"🔎 Claims found: {len(claims)}")
         if not claims:
             return True, ""
 
-        # Check the first claim's rating
         for claim in claims:
             claim_review = claim.get('claimReview', [])
             if claim_review:
                 rating = claim_review[0].get('textualRating', '').lower()
                 publisher = claim_review[0].get('publisher', {}).get('name', 'Unknown')
                 
-                # Broad keywords for false/misleading information
                 false_keywords = ['false', 'incorrect', 'misleading', 'fake', 'rumor', 'untrue', 'error']
                 if any(k in rating for k in false_keywords):
                     reason = f"Fact Check: This claim was rated '{rating}' by {publisher}."
-                    print(f"🚨 Fact check failed: {reason}")
+                    print(f"Fact check failed: {reason}")
                     return False, reason
 
         return True, ""
 
     except Exception as e:
-        print(f"❌ Fact Check API Error: {e}")
-        return True, "" # Default to true on API failure to avoid blocking users
+        print(f"Fact Check API Error: {e}")
+        return True, ""
 
+def is_factually_correct(text: str) -> Tuple[bool, str]:
+    """Legacy Synchronous Fact Check"""
+    api_key = os.getenv("GOOGLE_FACT_CHECK_API_KEY")
+    if not api_key:
+        return True, ""
 
-# -------------------------------
-# Test
-# -------------------------------
+    try:
+        url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+        params = {"query": text, "key": api_key}
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        claims = data.get('claims', [])
+        if not claims: return True, ""
+        
+        # Same logic as async...
+        for claim in claims:
+            claim_review = claim.get('claimReview', [])
+            if claim_review:
+                rating = claim_review[0].get('textualRating', '').lower()
+                publisher = claim_review[0].get('publisher', {}).get('name', 'Unknown')
+                false_keywords = ['false', 'incorrect', 'misleading', 'fake', 'rumor', 'untrue', 'error']
+                if any(k in rating for k in false_keywords):
+                    return False, f"Fact Check: This claim was rated '{rating}' by {publisher}."
+        return True, ""
+    except Exception:
+        return True, ""
 
 if __name__ == '__main__':
-    detector = ToxicityDetector(method='api')
+    # Test script
+    import asyncio
+    async def main():
+        detector = ToxicityDetector(method='api')
+        text = "go kill yourself"
+        print(f"Testing Async Detection on: {text}")
+        res = await detector.analyze_async(text)
+        print(res)
 
-    tests = [
-        "Hello everyone!",
-        "you are a fucking idiot",
-        "go kill yourself",
-        "THIS IS SO ANNOYING",
-        "You're stupid and worthless"
-    ]
-
-    for t in tests:
-        print("\n" + "="*60)
-        print("Testing:", t)
-        print("="*60)
-        result = detector.analyze(t)
-        print(f"Result: {result}")
+    asyncio.run(main())

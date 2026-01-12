@@ -73,9 +73,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     }))
                     return
 
-                # Check toxicity
+                # Check toxicity (ASYNC, no database_sync_to_async wrapper)
                 detector = ToxicityDetector()
-                toxicity_result = await database_sync_to_async(detector.analyze)(message_text)
+                toxicity_result = await detector.analyze_async(message_text)
 
                 is_toxic = toxicity_result['is_toxic']
                 toxicity_score = toxicity_result['toxicity_score']
@@ -288,9 +288,9 @@ class StreamChatConsumer(AsyncWebsocketConsumer):
                     }))
                     return
 
-                # Check toxicity
+                # Check toxicity (ASYNC)
                 detector = ToxicityDetector()
-                toxicity_result = await database_sync_to_async(detector.analyze)(message_text)
+                toxicity_result = await detector.analyze_async(message_text)
 
                 is_toxic = toxicity_result['is_toxic']
                 toxicity_score = toxicity_result['toxicity_score']
@@ -421,6 +421,7 @@ class StreamChatConsumer(AsyncWebsocketConsumer):
             return restrictions.exists()
         except:
             return False
+    
     
     
 
