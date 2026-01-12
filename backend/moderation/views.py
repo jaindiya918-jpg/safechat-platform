@@ -32,6 +32,18 @@ class ToxicityCheckView(APIView):
         
         return Response(result)
 
+class CheckAIImageView(APIView):
+    def post(self, request):
+        image_url = request.data.get('image_url')
+        if not image_url:
+            return Response({'error': 'Image URL is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        from .ai_detector import AIImageDetector
+        detector = AIImageDetector()
+        result = detector.detect(image_url)
+        
+        return Response(result)
+
 class WarningListView(generics.ListAPIView):
     queryset = Warning.objects.all().select_related('user')
     serializer_class = WarningSerializer

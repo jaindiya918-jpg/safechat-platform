@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff, Mic, MicOff, Heart, Clock, Trash2, Flag, } from 'lucide-react';
+import { Video, Send, AlertTriangle, Ban, Eye, Users, MessageSquare, Radio, Wifi, WifiOff, Mic, MicOff, Heart, Clock, Trash2, Flag, Sparkles } from 'lucide-react';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import Login from "./login";
 import {
@@ -96,7 +96,7 @@ const SocialModerationPlatform = () => {
   const fileInputRef = useRef(null);
   const [newPostImage, setNewPostImage] = useState(null);
   const [newPostCaption, setNewPostCaption] = useState("");
-
+  const [isUploading, setIsUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [reportingPost, setReportingPost] = useState(null);
@@ -1115,12 +1115,25 @@ const SocialModerationPlatform = () => {
                       </div>
                     </div>
 
+                    {post.is_ai_generated && (
+                      <div className="bg-gradient-to-r from-red-500/20 to-orange-500/20 border-l-4 border-red-500 p-3 m-4 rounded-r-xl animate-fade-in backdrop-blur-md">
+                        <div className="flex items-center">
+                          <AlertTriangle className="h-4 w-4 text-red-400 mr-2 animate-pulse" />
+                          <p className="text-[10px] text-red-200 font-black uppercase tracking-widest flex items-center">
+                            AI Generated Content
+                            <span className="ml-2 px-1.5 py-0.5 bg-red-500/20 rounded text-[9px] border border-red-500/30">ALERT</span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {post.is_rumour && (
                       <div className="bg-red-500/10 border-l-4 border-red-500 p-4 m-4 rounded-r-xl">
                         <div className="flex items-center">
                           <AlertTriangle className="h-5 w-5 text-red-500 mr-3" />
                           <p className="text-xs text-red-400 font-black uppercase tracking-widest">
                             Fact Check: Potential False Information
+                            {post.reports_count > 0 && <span className="ml-1 text-red-400/70">({post.reports_count} reports)</span>}
                           </p>
                         </div>
                         {post.rumor_reason && (

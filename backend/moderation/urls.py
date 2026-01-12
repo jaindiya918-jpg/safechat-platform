@@ -5,6 +5,7 @@ from .views import PostListCreateView, LikePostView, IncrementViewView, PostDele
 
 urlpatterns = [
     path('check/', views.ToxicityCheckView.as_view(), name='toxicity-check'),
+    path('check_ai_image/', views.CheckAIImageView.as_view(), name='check-ai-image'),
     path('check_rumor/', views.CheckRumorView.as_view(), name='check-rumor'),
     path('warnings/', views.WarningListView.as_view(), name='warning-list'),
     path('warnings/user/<int:user_id>/', views.UserWarningsView.as_view(), name='user-warnings'),

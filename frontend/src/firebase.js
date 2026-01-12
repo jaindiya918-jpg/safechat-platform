@@ -16,7 +16,6 @@ import {
     getDoc,
     runTransaction
 } from "firebase/firestore";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -29,21 +28,53 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// Validation Check
+if (!firebaseConfig.apiKey) {
+    console.error("❌ Firebase Config Missing! API Key is undefined.");
+    console.error("Did you create the .env file? Did you restart the dev server?");
+    alert("Firebase config missing! Check console/restart server.");
+}
+
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
 
+// Cloudinary Upload Function
 export async function uploadImage(file) {
     if (!file) return null;
-    console.log("📤 firebase.uploadImage: Starting upload for", file.name);
+
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+
+    if (!cloudName || !uploadPreset) {
+        console.error("❌ Cloudinary Config Missing!");
+        alert("Cloudinary configuration missing! Please add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to your .env file.");
+        throw new Error("Missing Cloudinary Config");
+    }
+
+    console.log("📤 Cloudinary Upload: Starting upload for", file.name);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', uploadPreset);
+
     try {
-        const storageRef = ref(storage, `posts/${Date.now()}_${file.name}`);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-        console.log("📤 firebase.uploadImage: Upload successful. URL obtained.");
-        return url;
+        const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Cloudinary Error: ${errorData.error.message}`);
+        }
+
+        const data = await response.json();
+        console.log("✅ Cloudinary Upload successful:", data.secure_url);
+        return data.secure_url;
     } catch (error) {
-        console.error("❌ firebase.uploadImage Error:", error);
+        console.error("❌ Upload Error:", error);
+        alert(`UPLOAD FAILED: ${error.message}`);
         throw error;
     }
 }
@@ -59,14 +90,36 @@ export function getPosts(callback) {
     });
 }
 
-export async function createPost(userId, username, caption, imageUrl) {
-    console.log("📥 firebase.createPost: Starting creation", { userId, username, caption, imageUrl });
+export async function createPost(userId, username, caption, imageUrl, isAiGenerated = false) {
+    console.log("📥 firebase.createPost: Starting creation", { userId, username, caption, imageUrl, isAiGenerated });
     try {
         // 1. Check for rumors using the backend API
         let isRumour = false;
         let rumorReason = "";
+        // 1a. AI Image Check
+        if (imageUrl) {
+            console.log("🔍 firebase.createPost: Checking image via Sightengine...");
+            try {
+                const aiResponse = await fetch('http://localhost:8000/api/moderation/check_ai_image/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_url: imageUrl })
+                });
 
-        console.log("📡 firebase.createPost: Checking for rumors via backend API...");
+                const aiData = await aiResponse.json();
+                console.log("🤖 AI Check Result:", aiData);
+
+                if (aiData.is_ai_generated) {
+                    console.log("🚨 Image identified as AI generated!");
+                    isAiGenerated = true;
+                    rumorReason = `Note: This image was detected as AI-generated (Confidence: ${(aiData.score * 100).toFixed(1)}%)`;
+                }
+            } catch (aiError) {
+                console.error("⚠️ AI check failed:", aiError);
+            }
+        }
+
+        // 1b. Rumor Check
         try {
             const response = await fetch('http://localhost:8000/api/moderation/check_rumor/', {
                 method: 'POST',
@@ -87,6 +140,7 @@ export async function createPost(userId, username, caption, imageUrl) {
             // Fail open so users can still post even if AI check fails
         }
 
+
         // 2. Create the post in Firestore
         console.log("💾 firebase.createPost: Saving to Firestore...");
         const docRef = await addDoc(collection(db, "posts"), {
@@ -99,10 +153,12 @@ export async function createPost(userId, username, caption, imageUrl) {
             likes_count: 0,
             views: 0,
             reports_count: 0,
+            reports_count: 0,
             likes: {},
             reports: {},
             is_rumour: isRumour,
             rumor_reason: rumorReason,
+            is_ai_generated: isAiGenerated,
             status: "active"
         });
         console.log("✅ firebase.createPost: Firestore document created with ID:", docRef.id);
@@ -208,7 +264,7 @@ export async function deletePost(postId) {
     }
 
     console.log("🔥 firebase.deletePost: Attempting to delete doc:", postId);
-    
+
     // Safety check: ensure the user is authenticated in Firebase
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -219,16 +275,16 @@ export async function deletePost(postId) {
 
     try {
         const postRef = doc(db, "posts", postId);
-        
+
         // Verify existence and ownership if possible before deletion to provide better error messages
         const postSnap = await getDoc(postRef);
         if (!postSnap.exists()) {
             throw new Error("Post does not exist.");
         }
-        
+
         const postData = postSnap.data();
         const ownerId = postData.user_id || postData.userId;
-        
+
         if (ownerId && ownerId !== currentUser.uid) {
             console.error("❌ Ownership mismatch in Firestore:", { ownerId, currentUid: currentUser.uid });
             throw new Error("Permission denied: You do not own this post.");

@@ -137,6 +137,7 @@ STATIC_URL = 'static/'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -153,6 +154,10 @@ REST_FRAMEWORK = {
 
 # Google Fact Check API
 GOOGLE_FACT_CHECK_API_KEY = os.environ.get("GOOGLE_FACT_CHECK_API_KEY", "YOUR_GOOGLE_FACT_CHECK_API_KEY_HERE")
+
+# Sightengine API
+SIGHTENGINE_API_USER = os.environ.get("SIGHTENGINE_API_USER", "1208256496")
+SIGHTENGINE_API_SECRET = os.environ.get("SIGHTENGINE_API_SECRET", "hWKXKMEuVeVUgtXQmXLJGMkWRsTk7tvP")
 
 # Channels
 ASGI_APPLICATION = 'safechat.asgi.application'

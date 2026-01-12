@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { auth } from "./firebase";
-import { Users, Mail, Lock, User, ArrowRight, ShieldCheck } from "lucide-react";
+import { auth, db } from "./firebase";
+import { Users, Mail, Lock, User, ArrowRight, ShieldCheck, Phone } from "lucide-react";
 import './App.css';
 
 import {
@@ -9,6 +9,7 @@ import {
     updateProfile,
     sendPasswordResetEmail
 } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 
 function Login({ onLogin }) {
     const [isLogin, setIsLogin] = useState(true);
@@ -18,7 +19,9 @@ function Login({ onLogin }) {
         password: "",
         confirmPassword: "",
         name: "",
+        phoneNumber: "",
     });
+
     const [message, setMessage] = useState("");
     const [messageType, setMessageType] = useState("error"); // 'error' or 'success'
 
@@ -56,6 +59,16 @@ function Login({ onLogin }) {
                 await updateProfile(userCredential.user, {
                     displayName: formData.name,
                 });
+
+                // Store user details in Firestore
+                await setDoc(doc(db, "users", userCredential.user.uid), {
+                    uid: userCredential.user.uid,
+                    name: formData.name,
+                    email: formData.email,
+                    phoneNumber: formData.phoneNumber,
+                    createdAt: new Date().toISOString(),
+                });
+
                 onLogin({
                     id: userCredential.user.uid,
                     username: formData.name,
@@ -67,7 +80,8 @@ function Login({ onLogin }) {
             if (isLogin) {
                 setMessage("Invalid email or password.");
             } else {
-                setMessage("Signup failed. Please try again.");
+                // Show the actual error message for debugging
+                setMessage(`Signup failed: ${error.message}`);
             }
         }
     };
@@ -94,13 +108,13 @@ function Login({ onLogin }) {
         setIsLogin(!isLogin);
         setIsForgotPassword(false);
         setMessage("");
-        setFormData({ email: "", password: "", confirmPassword: "", name: "" });
+        setFormData({ email: "", password: "", confirmPassword: "", name: "", phoneNumber: "" });
     };
 
     const toggleForgotPassword = () => {
         setIsForgotPassword(!isForgotPassword);
         setMessage("");
-        setFormData({ ...formData, password: "", confirmPassword: "", name: "" });
+        setFormData({ ...formData, password: "", confirmPassword: "", name: "", phoneNumber: "" });
     };
 
     return (
@@ -170,6 +184,23 @@ function Login({ onLogin }) {
                                                 onChange={handleChange}
                                                 className="w-full pl-12 pr-4 py-4 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-white/20 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none"
                                                 placeholder="Name"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {!isLogin && (
+                                    <div>
+                                        <label className="block text-[10px] font-black text-purple-300 uppercase tracking-widest mb-2 ml-1">Phone Number</label>
+                                        <div className="relative group">
+                                            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-purple-400/40 group-focus-within:text-purple-400 transition-colors" />
+                                            <input
+                                                type="tel"
+                                                name="phoneNumber"
+                                                value={formData.phoneNumber}
+                                                onChange={handleChange}
+                                                className="w-full pl-12 pr-4 py-4 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-white/20 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none"
+                                                placeholder="Phone Number"
                                             />
                                         </div>
                                     </div>

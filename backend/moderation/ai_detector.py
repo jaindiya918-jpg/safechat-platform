@@ -61,7 +61,7 @@ class KeywordDetector:
     def __init__(self):
         self.toxic_keywords = {
             'high': [
-                'hate', 'kill', 'die', 'death', 'nazi', 'terrorist',
+                'hate', 'die', 'death', 'nazi', 'terrorist',
                 'rape', 'murder', 'violence', 'abuse', 'attack'
             ],
             'medium': [
@@ -390,32 +390,54 @@ async def is_factually_correct_async(text: str) -> Tuple[bool, str]:
         return True, ""
 
 def is_factually_correct(text: str) -> Tuple[bool, str]:
-    """Legacy Synchronous Fact Check"""
+    """
+    Checks if the text is factually correct using Google Fact Check API.
+    Returns (is_correct, reason)
+    """
     api_key = os.getenv("GOOGLE_FACT_CHECK_API_KEY")
     if not api_key:
+        print("⚠️ GOOGLE_FACT_CHECK_API_KEY not set, skipping fact check")
         return True, ""
 
     try:
         url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
-        params = {"query": text, "key": api_key}
+        params = {
+            "query": text,
+            "key": api_key
+        }
+        
+        print(f"🔍 Checking facts for: '{text}' using Google Fact Check API")
         response = requests.get(url, params=params)
+        print(f"📡 API Response Status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
+        print(f"📊 API Data Keys: {list(data.keys())}")
+
         claims = data.get('claims', [])
-        if not claims: return True, ""
-        
-        # Same logic as async...
+        print(f"🔎 Claims found: {len(claims)}")
+        if not claims:
+            return True, ""
+
+        # Check the first claim's rating
         for claim in claims:
             claim_review = claim.get('claimReview', [])
             if claim_review:
                 rating = claim_review[0].get('textualRating', '').lower()
                 publisher = claim_review[0].get('publisher', {}).get('name', 'Unknown')
+                
+                # Broad keywords for false/misleading information
                 false_keywords = ['false', 'incorrect', 'misleading', 'fake', 'rumor', 'untrue', 'error']
                 if any(k in rating for k in false_keywords):
-                    return False, f"Fact Check: This claim was rated '{rating}' by {publisher}."
+                    reason = f"Fact Check: This claim was rated '{rating}' by {publisher}."
+                    print(f"🚨 Fact check failed: {reason}")
+                    return False, reason
+
         return True, ""
-    except Exception:
-        return True, ""
+
+    except Exception as e:
+        print(f"❌ Fact Check API Error: {e}")
+        return True, "" # Default to true on API failure to avoid blocking users
+
 
 if __name__ == '__main__':
     # Test script
@@ -428,3 +450,48 @@ if __name__ == '__main__':
         print(res)
 
     asyncio.run(main())
+
+
+
+class AIImageDetector:
+    def __init__(self):
+        from django.conf import settings
+        self.api_user = getattr(settings, 'SIGHTENGINE_API_USER', None)
+        self.api_secret = getattr(settings, 'SIGHTENGINE_API_SECRET', None)
+        self.api_url = "https://api.sightengine.com/1.0/check.json"
+
+    def detect(self, image_url: str) -> Dict:
+        if not self.api_user or not self.api_secret:
+            return {'is_ai_generated': False, 'score': 0.0, 'error': 'API Credentials missing'}
+
+        try:
+            params = {
+                'models': 'genai',
+                'api_user': self.api_user,
+                'api_secret': self.api_secret,
+                'url': image_url
+            }
+
+            response = requests.get(self.api_url, params=params, timeout=15)
+            
+            if response.status_code != 200:
+                return {'is_ai_generated': False, 'score': 0.0, 'error': f"API Error {response.status_code}"}
+
+            data = response.json()
+
+            if data.get('status') == 'success':
+                type_scores = data.get('type', {})
+                ai_score = type_scores.get('ai_generated', 0.0)
+                is_ai = ai_score > 0.80  # Threshold
+                
+                return {
+                    'is_ai_generated': is_ai,
+                    'score': ai_score,
+                    'details': type_scores
+                }
+            
+            return {'is_ai_generated': False, 'score': 0.0, 'error': data.get('error', {}).get('message', 'Unknown error')}
+
+        except Exception as e:
+            print(f"Sightengine Error: {e}")
+            return {'is_ai_generated': False, 'score': 0.0, 'error': str(e)}
