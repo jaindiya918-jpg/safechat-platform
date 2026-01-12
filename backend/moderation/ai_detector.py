@@ -63,7 +63,9 @@ class KeywordDetector:
         self.toxic_keywords = {
             'high': [
                 'hate', 'die', 'death', 'nazi', 'terrorist',
-                'rape', 'murder', 'violence', 'abuse', 'attack'
+                'rape', 'murder', 'violence', 'abuse', 'attack',
+                'stab', 'shoot', 'kill', 'gun', 'bomb', 'murderer',
+                'blood', 'corpse', 'destroy', 'weapon', 'assassin'
             ],
             'medium': [
                 'stupid', 'idiot', 'dumb', 'moron', 'loser', 'pathetic',
@@ -85,13 +87,22 @@ class KeywordDetector:
         self.harassment_patterns = [
             r'\bkys\b',
             r'\bgo\s+die\b',
-            # Targeted profanity: "you fuck", "fuck you", etc.
             r'\byou\s+.*fuck',
             r'\bfuck\s+you',
             r'\byou\s+suck',
             r'\bkill\s+yourself\b',
             r'\bkill\s+you\b',
             r'\bkilling\s+you\b',
+            r'\bstab\s+you\b',
+            r'\bshoot\s+you\b',
+            r'\bi\s+will\s+kill\s+you\b',
+            r'\bi\s+will\s+stab\s+you\b',
+            r'\bi\s+will\s+shoot\s+you\b',
+            r'\bi\s+am\s+going\s+to\s+kill\s+you\b',
+            r'\bi\s+am\s+going\s+to\s+stab\s+you\b',
+            r'\bkill\s+him\b',
+            r'\bkill\s+her\b',
+            r'\bkill\s+them\b'
         ]
 
         self.compliment_keywords = [
@@ -138,7 +149,14 @@ class KeywordDetector:
         
         is_toxic = toxicity_score >= 0.4 or severity_scores['high'] > 0
 
-        print(f"   [DEBUG] Keyword detector: is_toxic={is_toxic}, score={toxicity_score}, words={detected_words}")
+        log_entry = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Text: '{text_lower}' | is_toxic: {is_toxic} | score: {toxicity_score:.2f} | words: {detected_words}\n"
+        try:
+            with open('moderation_debug.log', 'a') as f:
+                f.write(log_entry)
+        except:
+            pass
+        print(f"   [DETECTION] Text: '{text_lower}'")
+        print(f"   [DETECTION] is_toxic: {is_toxic}, score: {toxicity_score}, words: {detected_words}")
 
         return {
             'is_toxic': is_toxic,
