@@ -7,7 +7,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
   const [isTimedOut, setIsTimedOut] = useState(false);
   const [timeoutRemaining, setTimeoutRemaining] = useState(0);
   const [streamStopped, setStreamStopped] = useState(false);
-  
+
   const recognitionRef = useRef(null);
   const speechWsRef = useRef(null);
   const timeoutIntervalRef = useRef(null);
@@ -56,23 +56,23 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
 
   const startTimeoutCountdown = useCallback((duration) => {
     let remaining = duration;
-    
+
     if (timeoutIntervalRef.current) {
       clearInterval(timeoutIntervalRef.current);
     }
-    
+
     console.log(`⏰ Starting timeout countdown: ${duration} seconds`);
-    
+
     timeoutIntervalRef.current = setInterval(() => {
       remaining -= 1;
       setTimeoutRemaining(remaining);
-      
+
       if (remaining <= 0) {
         clearInterval(timeoutIntervalRef.current);
         setIsTimedOut(false);
         setTimeoutRemaining(0);
         console.log('✅ Timeout ended, resuming speech recognition');
-        
+
         // Resume speech recognition only if still streaming
         if (recognitionRef.current && isStreamingRef.current) {
           try {
@@ -91,7 +91,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
     // If not streaming, clean up and return early
     if (!isStreaming || !streamId || !userId) {
       console.log('❌ Not starting speech recognition: streaming ended or missing requirements');
-      
+
       // Clean up if recognition is active
       if (recognitionRef.current) {
         try {
@@ -102,11 +102,11 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
           console.warn('Error stopping recognition:', e);
         }
       }
-      
+
       if (speechWsRef.current) {
         speechWsRef.current.close();
       }
-      
+
       return;
     }
 
@@ -114,7 +114,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
 
     // Initialize Web Speech API
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
+
     if (!SpeechRecognition) {
       console.error('❌ Speech recognition not supported in this browser');
       return;
@@ -128,9 +128,9 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
 
     // Connect to speech moderation WebSocket
     const connectSpeechWebSocket = () => {
-      console.log(`🔌 Connecting to speech WebSocket: ws://localhost:8000/ws/speech/${streamId}/${userId}/`);
-      const ws = new WebSocket(`ws://localhost:8000/ws/speech/${streamId}/${userId}/`);
-      
+      console.log(`🔌 Connecting to speech WebSocket: ws://127.0.0.1:8000/ws/speech/${streamId}/${userId}/`);
+      const ws = new WebSocket(`ws://127.0.0.1:8000/ws/speech/${streamId}/${userId}/`);
+
       ws.onopen = () => {
         console.log('✅ Speech moderation WebSocket connected');
         // If we were waiting to resume recognition until WS opened, do that now
@@ -145,7 +145,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
           }
         }
       };
-      
+
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         console.log('📨 Speech moderation message:', data.type, data);
@@ -153,21 +153,21 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
         if (data.type === 'speech_warning') {
           console.log(`⚠️ WARNING ${data.warning_number}/3 received`);
           setWarnings(data.warning_number);
-          
+
           // Show alert with warning details
           alert(data.message || `Warning ${data.warning_number}/3: Your speech contains inappropriate content`);
-          
+
         } else if (data.type === 'speech_timeout') {
           console.log(`🔇 TIMEOUT received: ${data.timeout_duration} seconds`);
           setWarnings(data.warning_number);
           setIsTimedOut(true);
           setTimeoutRemaining(data.timeout_duration);
-          
+
           alert(data.message || `You have been muted for ${data.timeout_duration} seconds`);
-          
+
           // Start countdown
           startTimeoutCountdown(data.timeout_duration);
-          
+
           // Stop recognition during timeout
           if (recognitionRef.current) {
             try {
@@ -177,12 +177,12 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
               console.warn('Error stopping recognition:', e);
             }
           }
-          
+
         } else if (data.type === 'stream_stopped') {
           console.log('🚫 STREAM STOPPED due to violations');
           setStreamStopped(true);
           alert(data.message || 'Your stream has been terminated due to repeated violations');
-          
+
           // Stop recognition immediately
           if (recognitionRef.current) {
             try {
@@ -192,17 +192,17 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
               console.warn('Error stopping recognition:', e);
             }
           }
-          
+
         } else if (data.type === 'speech_toxic') {
           console.log('🚨 TOXIC SPEECH DETECTED!');
           console.log('   Transcript:', data.transcript);
           console.log('   Details:', data.details);
           console.log('   Warning #:', data.warning_number);
-          
+
         } else if (data.type === 'speech_clean') {
           console.log('✅ Speech is clean:', data.transcript);
           setTranscript(data.transcript);
-          
+
         } else if (data.type === 'timeout_active') {
           console.log('⏸️ User is timed out, cannot speak');
         } else if (data.type === 'timeout_expired') {
@@ -230,11 +230,11 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
           }
         }
       };
-      
+
       ws.onerror = (error) => {
         console.error('❌ Speech WebSocket error:', error);
       };
-      
+
       ws.onclose = () => {
         console.log('🔌 Speech WebSocket disconnected');
         // Stop listening when WS disconnects to avoid lost transcripts
@@ -250,7 +250,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
           }, 3000);
         }
       };
-      
+
       speechWsRef.current = ws;
     };
 
@@ -265,12 +265,12 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           const transcript = event.results[i][0].transcript.trim();
-          
+
           console.log('🎤 FINAL TRANSCRIPT:', transcript);
-          
-          if (transcript && speechWsRef.current && 
-              speechWsRef.current.readyState === WebSocket.OPEN && 
-              !isTimedOut && !streamStopped) {
+
+          if (transcript && speechWsRef.current &&
+            speechWsRef.current.readyState === WebSocket.OPEN &&
+            !isTimedOut && !streamStopped) {
             // Use throttled send
             throttledSend(speechWsRef.current, transcript);
           }
@@ -280,7 +280,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
 
     recognition.onerror = (event) => {
       console.error('❌ Speech recognition error:', event.error);
-      
+
       if (event.error === 'no-speech') {
         // Silently restart for no-speech errors
         console.log('🔄 No speech detected, restarting...');
@@ -301,7 +301,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
 
     recognition.onend = () => {
       console.log('🎙️ Recognition ended');
-      
+
       // Auto-restart only if still streaming and not timed out
       const now = Date.now();
       const RESTART_COOLDOWN = 800; // ms
@@ -357,7 +357,7 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
     // Cleanup function
     return () => {
       console.log('🧹 Cleaning up speech recognition');
-      
+
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
@@ -366,15 +366,15 @@ export const useSpeechRecognition = (streamId, userId, isStreaming) => {
           // Ignore errors on cleanup
         }
       }
-      
+
       if (speechWsRef.current) {
         speechWsRef.current.close();
       }
-      
+
       if (timeoutIntervalRef.current) {
         clearInterval(timeoutIntervalRef.current);
       }
-      
+
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-elgo)2%%$=yd1fgizae&c&=8m6zcx!4!-jiyqdj+--mqw6t119
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
