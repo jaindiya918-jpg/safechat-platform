@@ -6,6 +6,7 @@ class User(AbstractUser):
     nickname = models.CharField(max_length=100, blank=True)
     bio = models.TextField(max_length=500, blank=True)
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    phone_number = models.CharField(max_length=20, blank=True, null=True)
     
     # Behavioral stats
     toxicity_score = models.FloatField(default=0.0, help_text="Average toxicity score (0-1)")

@@ -121,7 +121,7 @@ const SocialModerationPlatform = () => {
     if (!user) return;
 
     const connectWebSocket = () => {
-      const ws = new WebSocket('ws://localhost:8000/ws/chat/');
+      const ws = new WebSocket('ws://127.0.0.1:8000/ws/chat/');
 
       ws.onopen = () => {
         console.log('WebSocket connected');
@@ -210,7 +210,7 @@ const SocialModerationPlatform = () => {
     if (!user || !currentStream) return;
 
     const connectStreamWebSocket = () => {
-      const ws = new WebSocket(`ws://localhost:8000/ws/chat/${currentStream.id}/`);
+      const ws = new WebSocket(`ws://127.0.0.1:8000/ws/chat/${currentStream.id}/`);
 
       ws.onopen = () => {
         console.log('Stream WebSocket connected');
